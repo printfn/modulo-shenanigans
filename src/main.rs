@@ -1,13 +1,14 @@
 use std::{
-    ffi::CString,
-    fs,
+    ffi, fs,
     io::{self, Write},
-    mem, ptr,
+    mem,
+    os::fd::AsRawFd,
+    ptr,
 };
 
 use nix::{
-    errno::{self, errno},
-    libc::{close, mmap, open, MAP_PRIVATE, O_RDONLY, PROT_EXEC, PROT_READ, MAP_FAILED},
+    errno::Errno,
+    libc::{mmap, MAP_FAILED, MAP_PRIVATE, PROT_EXEC, PROT_READ},
 };
 
 fn main() -> eyre::Result<()> {
@@ -36,39 +37,36 @@ fn main() -> eyre::Result<()> {
                 last_percentage = percentage;
             }
         }
-        io::stdout().flush()?;
+        println!();
         file.write_all(b"\xc3")?; // fallback ret
         file.flush()?;
         let end_time = std::time::Instant::now();
-        println!("File created ({} seconds).", (end_time - start_time).as_secs());
+        println!(
+            "File created ({} seconds).",
+            (end_time - start_time).as_secs()
+        );
     }
 
+    let filesize = fs::metadata(path)?.len();
+    println!("{path} has a size of {filesize} bytes");
+    let file = fs::File::open(path)?;
+    let fd = file.as_raw_fd();
+    println!("Opened {path} as fd {fd}");
+
     let is_even = unsafe {
-        let filesize = fs::metadata(path)?.len();
-        println!("{path} has a size of {filesize} bytes");
-        let c_path = CString::new(path.as_bytes())?;
-        let fd = open(c_path.as_ptr(), O_RDONLY);
-        if fd == -1 {
-            return Err(errno::from_i32(errno()).into());
-        }
-        println!("Opened {path} as fd {fd}");
         let mapped_ptr = mmap(
             ptr::null_mut(),
             filesize as usize,
             PROT_EXEC | PROT_READ,
             MAP_PRIVATE,
-            fd,
+            file.as_raw_fd(),
             0,
         );
         if mapped_ptr == MAP_FAILED {
-            return Err(errno::from_i32(errno()).into());
+            return Err(Errno::last().into());
         }
         println!("Mapped {path} at {mapped_ptr:?}");
-        if close(fd) == -1 {
-            return Err(errno::from_i32(errno()).into());
-        }
-        let function_ptr: fn(i32) -> i32 = mem::transmute(mapped_ptr);
-        function_ptr
+        mem::transmute::<*mut ffi::c_void, fn(u32) -> bool>(mapped_ptr)
     };
 
     loop {
@@ -80,8 +78,14 @@ fn main() -> eyre::Result<()> {
         if trimmed.is_empty() || trimmed == "exit" || trimmed == "quit" {
             break;
         }
-        let input: i32 = trimmed.parse()?;
-        if is_even(input) != 0 {
+        let input: u32 = match trimmed.parse() {
+            Ok(input) => input,
+            Err(e) => {
+                println!("Error: {}", e);
+                continue;
+            }
+        };
+        if is_even(input) {
             println!("{} is even", input);
         } else {
             println!("{} is odd", input);
