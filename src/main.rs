@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
     mem,
     os::fd::AsRawFd,
-    ptr,
+    ptr, time,
 };
 
 use nix::{
@@ -15,7 +15,7 @@ fn main() -> eyre::Result<()> {
     let path = "/tmp/modulo-shenanigans-bin";
     if fs::metadata(path).is_err() {
         println!("Could not open file '{path}', creating...");
-        let start_time = std::time::Instant::now();
+        let start_time = time::Instant::now();
         let file = fs::File::create(path)?;
         let mut file = io::BufWriter::new(file);
         file.write_all(b"\x31\xc0")?; // xor eax, eax
@@ -40,7 +40,7 @@ fn main() -> eyre::Result<()> {
         println!();
         file.write_all(b"\xc3")?; // fallback ret
         file.flush()?;
-        let end_time = std::time::Instant::now();
+        let end_time = time::Instant::now();
         println!(
             "File created ({} seconds).",
             (end_time - start_time).as_secs()
@@ -59,7 +59,7 @@ fn main() -> eyre::Result<()> {
             filesize as usize,
             PROT_EXEC | PROT_READ,
             MAP_PRIVATE,
-            file.as_raw_fd(),
+            fd,
             0,
         );
         if mapped_ptr == MAP_FAILED {
